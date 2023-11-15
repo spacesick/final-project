@@ -1,0 +1,36 @@
+device: cuda
+
+seed: 1
+
+model:
+  name: pfe
+  checkpoint_root: ckpt/pfe
+  load_latest_checkpoint: False
+  emb_size: 512
+  use_pretrained: True
+  use_l2norm: True
+  freeze_bnorm: True
+  freeze_backbone: False
+  uncertainty_fc_size: 256
+
+optimizer:
+  name: adamw
+  lr: 1e-4
+  epochs: 2
+  weight_decay: 1e-4
+  warmup: 10
+
+lr_scheduler:
+  name: step
+  decay_step_size: 100
+  decay_gamma: 0.5
+
+dataset:
+  name: lfw
+  path: data/lfw
+  batch_size: 4
+  batch_classes: 1
+  workers: 1
+
+logging:
+  log_to_wandb: False

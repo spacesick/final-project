@@ -1,0 +1,71 @@
+# Device type to use.
+device: cpu
+
+# Set a global seed to make experiments reproducible. Delete this line to use a random seed.
+seed: 1
+
+model:
+  # Name of model.
+  # pfe | proxyanchor
+  name: pfe
+  # Folder path to save and load model checkpoints.
+  checkpoint_root: ckpt/pfe
+  # Whether to load the latest checkpoint in checkpoint_root.
+  load_latest_checkpoint: False
+  # Model embedding size.
+  emb_size: 512
+  # Whether to load imagenet pretrained weights for the model backbone (resnet).
+  use_pretrained: True
+  # Whether to use L2 normalization on the model embeddings.
+  use_l2norm: True
+  # Whether to freeze batch normalization layers in the model backbone (resnet).
+  freeze_bnorm: True
+  # Whether to freeze the model backbone (resnet). Overrides freeze_bnorm.
+  freeze_backbone: False
+  # Uncertainty module intermediate fully connected layers size for pfe model.
+  uncertainty_fc_size: 256
+
+optimizer:
+  # Name of optimizer.
+  # adamw
+  name: adamw
+  # Initial learning rate.
+  lr: 1e-4
+  # Number of epochs to train for.
+  epochs: 2
+  # Weight decay for adamw optimizer.
+  weight_decay: 1e-4
+  # Warmup epochs. Delete this line to disable warmup.
+  warmup: 10
+
+loss:
+  # Loss margin for proxy anchor loss.
+  margin: 0.1
+  # Loss alpha for proxy anchor loss.
+  alpha: 32
+
+lr_scheduler:
+  # Name of learning rate scheduler.
+  # step
+  name: step
+  # Decay step size for step scheduler.
+  decay_step_size: 100
+  # Decay gamma for step scheduler.
+  decay_gamma: 0.5
+
+dataset:
+  # Name of dataset.
+  # lfw | casia-webface
+  name: lfw
+  # Root folder path to the specified dataset.
+  path: data/lfw
+  # Batch size.
+  batch_size: 4
+  # Number of classes per batch.
+  batch_classes: 1
+  # Number of workers for data loading.
+  workers: 1
+
+logging:
+  # Whether to log to WandB.
+  log_to_wandb: False
