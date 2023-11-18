@@ -12,6 +12,7 @@ import torch.nn.functional as F
 import wandb
 from omegaconf import OmegaConf
 from pytorch_metric_learning.losses import ProxyAnchorLoss
+from torch.nn.utils.clip_grad import clip_grad_value_
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import BatchSampler
 from torchvision.datasets import LFWPeople
@@ -31,11 +32,11 @@ class Pipeline:
     self.cfg = cfg
     self.device = self.cfg.device
 
-    if self.cfg.seed:
+    if 'seed' in self.cfg:
+      random.seed(self.cfg.seed)
+      np.random.seed(self.cfg.seed)
       t.manual_seed(self.cfg.seed)
       t.cuda.manual_seed_all(self.cfg.seed)
-      np.random.seed(self.cfg.seed)
-      random.seed(self.cfg.seed)
 
     self.logger = logging.getLogger(__name__)
 
@@ -51,6 +52,10 @@ class Pipeline:
       raise KeyError('No optimizer specified in config file')
     if 'lr_scheduler' not in self.cfg:
       raise KeyError('No lr_scheduler specified in config file')
+    if 'logging' not in self.cfg:
+      raise KeyError('No logging specified in config file')
+    if 'log_to_wandb' not in self.cfg.logging:
+      raise KeyError('Please define log_to_wandb in the logging section of the config file')
 
     self.logger.debug(
         'Init pipeline with config:\n%s',
@@ -96,18 +101,8 @@ class Pipeline:
         batch_size=self.cfg.dataset.batch_size,
         batch_classes=self.cfg.dataset.batch_classes
     )
-    tst_balanced_sampler = BalancedSampler(
-        self.tst_set,
-        batch_size=self.cfg.dataset.batch_size,
-        batch_classes=self.cfg.dataset.batch_classes
-    )
     trn_batch_sampler = BatchSampler(
         trn_balanced_sampler,
-        batch_size=self.cfg.dataset.batch_size,
-        drop_last=True
-    )
-    tst_batch_sampler = BatchSampler(
-        tst_balanced_sampler,
         batch_size=self.cfg.dataset.batch_size,
         drop_last=True
     )
@@ -127,18 +122,12 @@ class Pipeline:
         pin_memory=True,
         batch_sampler=trn_batch_sampler
     )
-    # self.tst_loader = DataLoader(
-    #     self.tst_set,
-    #     batch_size=self.cfg.dataset.batch_size,
-    #     shuffle=False,
-    #     num_workers=self.cfg.dataset.workers,
-    #     pin_memory=True
-    # )
     self.tst_loader = DataLoader(
         self.tst_set,
+        batch_size=self.cfg.dataset.batch_size,
+        shuffle=False,
         num_workers=self.cfg.dataset.workers,
-        pin_memory=True,
-        batch_sampler=tst_batch_sampler
+        pin_memory=True
     )
 
   def build_model(self):
@@ -173,18 +162,6 @@ class Pipeline:
     self.loss_func.to(self.device)
 
   def get_optimizer(self):
-    # self.param_groups = [
-    #   {
-    #     'params': list(
-    #       set(self.model.parameters())
-    #       .difference(set(self.model.backbone.net.head.parameters()))
-    #     )
-    #   },
-    #   {
-    #     'params': self.model.backbone.net.head.parameters(),
-    #     'lr': self.cfg.optimizer.lr * 1.0
-    #   },
-    # ]
     self.param_groups = []
 
     model_params = [
@@ -251,8 +228,14 @@ class Pipeline:
       # Set model to training mode
       self.model.train(True)
 
+      if 'freeze_bnorm' in self.cfg.model:
+        modules = self.model.modules()
+        for module in modules:
+          if isinstance(module, nn.BatchNorm2d):
+            module.eval()
+
       epoch_start_time = time.time()
-      if self.cfg.optimizer.warmup:
+      if 'warmup' in self.cfg.optimizer:
         set_warmup_params = set(
             list(self.model.backbone.net.head.parameters()) +
             list(self.loss_func.parameters())
@@ -276,8 +259,6 @@ class Pipeline:
         # Forward pass
         model_output = self.model(x_batch.squeeze().to(self.device))
         loss = self.loss_func(model_output, y_batch.squeeze().to(self.device))
-
-        # TODO test effect of gradient clipping
 
         # # Periodically print training loss
         # if batch_idx % self.cfg.logging.validation_period == 0:
