@@ -12,11 +12,8 @@ import torch.nn.functional as F
 import wandb
 from omegaconf import OmegaConf
 from pytorch_metric_learning.losses import ProxyAnchorLoss
-from torch.nn.utils.clip_grad import clip_grad_value_
 from torch.utils.data import DataLoader
 from torch.utils.data.sampler import BatchSampler
-from torchvision.datasets import LFWPeople
-from torchvision.models import ResNet50_Weights, resnet50
 from tqdm import tqdm
 
 import utils
@@ -57,10 +54,23 @@ class Pipeline:
     if 'log_to_wandb' not in self.cfg.logging:
       raise KeyError('Please define log_to_wandb in the logging section of the config file')
 
+    cfg_yaml = OmegaConf.to_yaml(cfg)
+    cfg_hash = self.cfg.experiment
     self.logger.debug(
-        'Init pipeline with config:\n%s',
-        OmegaConf.to_yaml(cfg)
+        'Init pipeline with config:\n%s\nHash=%s',
+        cfg_yaml,
+        cfg_hash
     )
+
+    if self.cfg.logging.log_to_wandb:
+      cfg_dict = OmegaConf.to_container(self.cfg)
+      assert isinstance(cfg_dict, dict)
+      wandb.init(
+          project=f'fp_{self.cfg.model.name}_{self.cfg.dataset.name}',
+          id=cfg_hash,
+          config=cfg_dict,
+          resume='allow'
+      )
 
     self.get_dataloaders()
     self.build_model()
@@ -73,16 +83,14 @@ class Pipeline:
     )
 
   def get_dataloaders(self):
-    if self.cfg.dataset.name == 'lfw':
+    if self.cfg.dataset.name == 'lfw-only':
       self.trn_set = LFWDataset(
-          root=self.cfg.dataset.path,
           split='train',
           image_set='deepfunneled',
           transform=utils.make_transform(train=True),
           download=True
       )
       self.tst_set = LFWDataset(
-          root=self.cfg.dataset.path,
           split='test',
           image_set='original',
           transform=utils.make_transform(train=False),
@@ -107,15 +115,6 @@ class Pipeline:
         drop_last=True
     )
 
-    # self.trn_loader = DataLoader(
-    #     self.trn_set,
-    #     batch_size=self.cfg.dataset.batch_size,
-    #     shuffle=False,  # no shuffle for pfe
-    #     num_workers=self.cfg.dataset.workers,
-    #     drop_last=True,  # false for pfe
-    #     pin_memory=True,
-    #     sampler=BalancedSampler
-    # )
     self.trn_loader = DataLoader(
         self.trn_set,
         num_workers=self.cfg.dataset.workers,
@@ -214,12 +213,6 @@ class Pipeline:
   def train(self):
     self.logger.info('Starting training for %d epochs.', self.cfg.optimizer.epochs)
 
-    # Track loss reduction
-    trn_loss_hist = []
-    tst_loss_hist = []
-    trn_step_hist = []
-    tst_step_hist = []
-
     best_recall = 0.0
 
     for epoch in range(self.cfg.optimizer.epochs):
@@ -260,15 +253,6 @@ class Pipeline:
         model_output = self.model(x_batch.squeeze().to(self.device))
         loss = self.loss_func(model_output, y_batch.squeeze().to(self.device))
 
-        # # Periodically print training loss
-        # if batch_idx % self.cfg.logging.validation_period == 0:
-        #   tst_step_hist.append(batch_idx)
-        #   tst_x_batch, tst_y_batch = next(iter(self.tst_loader))
-        #   validation_logits = self.model(tst_x_batch)
-        #   X, Y, Z = validation_logits.shape
-        #   validation_loss = F.cross_entropy(validation_logits.view(X * Y, Z), tst_y_batch.view(X * Y))
-        #   tst_loss_hist.append(validation_loss.item())
-
         # Backward pass
         self.optimizer.zero_grad()
         loss.backward()
@@ -276,19 +260,18 @@ class Pipeline:
         # Update params
         self.optimizer.step()
 
-        trn_losses.append(loss.item())
+        if not t.isnan(loss).item() and not t.isinf(loss).item():
+          trn_losses.append(loss.item())
 
         progress_bar.set_description(
             f'TRAINING - Loss = {loss.item():>.3f}'
         )
-        break
 
       last_lr = self.scheduler.get_last_lr()[0]
       self.scheduler.step()
 
       # Track and log the training loss
       mean_trn_loss = np.mean(trn_losses)
-      trn_loss_hist.append(mean_trn_loss)
 
       epoch_training_time = time.time() - epoch_start_time
       self.logger.info(
@@ -301,45 +284,54 @@ class Pipeline:
           last_lr
       )
 
-      epoch_start_time = time.time()
-      recall = self.eval_metrics()
-      epoch_evaluation_time = time.time() - epoch_start_time
-      self.logger.info(
-          'Elapsed evaluation epoch time = %.3f seconds',
-          epoch_evaluation_time
-      )
-      for k, r_at_k in recall.items():
+      wandb.log({
+          'Training Loss': mean_trn_loss,
+          'Learning Rate': last_lr,
+          'Epoch Training Time': epoch_training_time
+      }, step=epoch)
+
+      if (epoch + 1) % self.cfg.logging.period == 0:
+        epoch_start_time = time.time()
+        mean_tst_loss, recall = self.eval_metrics()
+        epoch_evaluation_time = time.time() - epoch_start_time
         self.logger.info(
-            'Recall@(%d) = %.4f',
-            k,
-            100.0 * r_at_k
+            'Elapsed evaluation epoch time = %.3f seconds',
+            epoch_evaluation_time
         )
-
-      if self.cfg.logging.log_to_wandb:
-        wandb.log({
-            'Training Log Loss': mean_trn_loss,
-            'Learning Rate': last_lr,
-            'Epoch Training Time': epoch_training_time,
-            'Epoch Evaluation Time': epoch_evaluation_time
-        }, step=epoch)
+        self.logger.info(
+            'Mean Test Loss = %.3f',
+            mean_tst_loss
+        )
         for k, r_at_k in recall.items():
-          wandb.log({
-              f'Recall@({k})': 100.0 * r_at_k
-          }, step=epoch)
-        self.logger.info('Logged epoch summary to WandB.')
+          self.logger.info(
+              'Recall@(%d) = %.4f',
+              k,
+              100.0 * r_at_k
+          )
 
-      if recall[1] > best_recall:
-        best_recall = recall[1]
-        ckpt_path = f"{self.cfg.model.checkpoint_root}/{datetime.now().strftime('%Y-%m-%d_%H.%M.%S')}_{self.cfg.model.name}_{self.cfg.dataset.name}.pth"
-        t.save({
-            'epoch': epoch,
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'scheduler_state_dict': self.scheduler.state_dict(),
-            'loss': loss,
-            'best_recall': best_recall
-        }, ckpt_path)
-        self.logger.info('New checkpoint saved in %s.', ckpt_path)
+        if self.cfg.logging.log_to_wandb:
+          wandb.log({
+              'Test Loss': mean_tst_loss,
+              'Epoch Evaluation Time': epoch_evaluation_time
+          }, step=epoch)
+          for k, r_at_k in recall.items():
+            wandb.log({
+                f'Recall@({k})': 100.0 * r_at_k
+            }, step=epoch)
+          self.logger.info('Logged epoch summary to WandB.')
+
+        if recall[1] > best_recall or (epoch + 1) % 100 == 0:
+          best_recall = recall[1]
+          ckpt_path = f"{self.cfg.model.checkpoint_root}/{datetime.now().strftime('%Y-%m-%d_%H.%M.%S')}_{self.cfg.model.name}_{self.cfg.dataset.name}_{best_recall:.3f}_{epoch}_{self.cfg.experiment}.pth"
+          t.save({
+              'epoch': epoch,
+              'model_state_dict': self.model.state_dict(),
+              'optimizer_state_dict': self.optimizer.state_dict(),
+              'scheduler_state_dict': self.scheduler.state_dict(),
+              'loss': loss,
+              'best_recall': best_recall
+          }, ckpt_path)
+          self.logger.info('New checkpoint saved in %s.', ckpt_path)
 
     self.logger.info('Training finished.')
 
@@ -347,19 +339,71 @@ class Pipeline:
     # Set model to evaluation mode
     self.model.train(False)
     with t.no_grad():
-      X, T = utils.predict_batchwise(self.model, self.tst_loader, self.device)
-      X = utils.l2_norm(X)
+      progress_bar = tqdm(enumerate(self.tst_loader), total=len(self.tst_loader))
+      labels = []
+      tst_losses = []
+      if self.cfg.model.name == 'proxyanchor':
+        embeddings = []
+        for _, (x_batch, y_batch) in progress_bar:
+          model_output = self.model(x_batch.squeeze().to(self.device))
 
-      K = 32
-      Y = []
+          y = y_batch.squeeze().to(self.device)
+          loss = self.loss_func(model_output, y)
 
-      cos_sim = F.linear(X, X).to(self.device)
-      Y = T[cos_sim.topk(1 + K)[1][:, 1:]]
-      Y = Y.float()
+          if not t.isnan(loss).item() and not t.isinf(loss).item():
+            tst_losses.append(loss.item())
+
+          progress_bar.set_description(
+              f'EVALUATING - Loss = {loss.item():>.3f}'
+          )
+
+          embeddings.append(model_output)
+          labels.append(y)
+
+        embeddings = t.cat(embeddings)  # (number of samples, embedding size)
+        similarity_mat = F.linear(embeddings, embeddings).to(self.device)
+      else:
+        embeddings = [[], []]
+        for _, (x_batch, y_batch) in progress_bar:
+          model_output = self.model(x_batch.squeeze().to(self.device))
+
+          y = y_batch.squeeze().to(self.device)
+          loss = self.loss_func(model_output, y)
+
+          if not t.isnan(loss).item() and not t.isinf(loss).item():
+            tst_losses.append(loss.item())
+
+          progress_bar.set_description(
+              f'EVALUATING - Loss = {loss.item():>.3f}'
+          )
+
+          embeddings[0].append(model_output[0])  # mu
+          embeddings[1].append(model_output[1])  # sigma
+          labels.append(y)
+
+        embeddings = (t.cat(embeddings[0]), t.cat(embeddings[1]))
+        similarity_mat = utils.compute_batch_mls(embeddings, embeddings, limit_memory=True)
+
+      # Track and log the training loss
+      mean_tst_loss = np.mean(tst_losses)
+
+      labels = t.cat(labels)  # (number of samples)
+
+      sorted_similarity_mat = similarity_mat.topk(65)
+
+      # (n, m) tensor where the tensor at index n contains the sorted similarity scores of the most similar samples
+      # with the sample at index n, excluding the similarity of a sample with itself. n = m = number of samples.
+      ranked_similar_samples_scores = sorted_similarity_mat[0][:, 1:]
+
+      # (n, m) tensor where the tensor at index n contains the sorted indices of the most similar samples
+      # with the sample at index n, excluding the similarity of a sample with itself. n = m = number of samples.
+      ranked_similar_samples_indices = sorted_similarity_mat[1][:, 1:]
+
+      ranked_similar_labels = labels[ranked_similar_samples_indices]
 
       recall = {}
       for k in [1, 2, 4, 8, 16, 32]:
-        r_at_k = utils.calc_recall_at_k(T, Y, k)
+        r_at_k = utils.compute_recall_at_k(labels, ranked_similar_labels, k)
         recall[k] = r_at_k
 
-      return recall
+      return mean_tst_loss, recall

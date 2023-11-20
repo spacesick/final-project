@@ -1,9 +1,16 @@
 import torch as t
 from torchvision import transforms
-from tqdm import tqdm
 
 
 def make_transform(train=True):
+  """Return an image transform for ResNet.
+
+  Args:
+      train (bool, optional): Model state. Defaults to True.
+
+  Returns:
+      Compose: Image transform.
+  """
   resnet_resize = 256
   resnet_cropsize = 224
   resnet_mean = [0.485, 0.456, 0.406]
@@ -27,73 +34,75 @@ def make_transform(train=True):
   return resnet_transform
 
 
-def l2_norm(input):
-  buffer = t.pow(input, 2)
-
-  normp = t.sum(buffer, 1).add_(1e-12)
-  norm = t.sqrt(normp)
-
-  _output = t.div(input, norm.view(-1, 1).expand_as(input))
-
-  output = _output.view(input.size())
-
-  return output
-
-
-def calc_recall_at_k(
-    T,
-    Y,
+def compute_recall_at_k(
+    labels,
+    top_k_label_predictions,
     k
 ):
+  """Compute Recall@k metric.
+
+  Args:
+      labels (Tensor): Target labels with size (number of samples).
+      top_k_label_predictions (Tensor): Top k predicted labels with size (number of samples, k).
+      k (int): k value.
+
+  Returns:
+      float: Recall@k value.
   """
-  T : [nb_samples] (target labels)
-  Y : [nb_samples x k] (k predicted labels/neighbours)
-  """
+  assert top_k_label_predictions.dim() == 2
+  assert labels.size(0) == top_k_label_predictions.size(0)
+  assert labels.dtype == top_k_label_predictions.dtype
 
-  s = 0
-  for a, b in zip(T, Y):
-    if a in t.Tensor(b).long()[:k]:
-      s += 1
-  return s / (1. * len(T))
+  tp = 0
+  for actual, predictions in zip(labels, top_k_label_predictions):
+    if actual in predictions[:k]:
+      tp += 1
+  return tp / len(labels)
 
 
-def predict_batchwise(
-    model,
-    dataloader,
-    device
+def compute_batch_mls(
+    query_embeddings,
+    refer_embeddings,
+    limit_memory=False
 ):
-  model_is_training = model.training
-  model.train(False)
+  """Computer Mutual Likelihood Score of a batch of embeddings.
 
-  list_of_samples = [[] for i in range(len(dataloader.dataset[0]))]
-  with t.no_grad():
-    progress_bar = tqdm(dataloader)
-    progress_bar.set_description(
-        'EVALUATING - Recall@K'
-    )
-    for batch in progress_bar:
-      for i, J in enumerate(batch):
-        # i = 0: sz_batch * images
-        # i = 1: sz_batch * labels
-        # i = 2: sz_batch * indices
-        if i == 0:
-          # Move images to device
-          J = model(J.to(device))
-          if isinstance(J, tuple):
-            J = J[0]
+  Args:
+      query_embeddings (Tuple[Tensor, Tensor]): Query embeddings.
+      refer_embeddings (Tuple[Tensor, Tensor]): Reference embeddings.
+      limit_memory (bool, optional): Whether to limit memory usage to prevent out of memory errors. Defaults to False.
 
-        for j in J:
-          list_of_samples[i].append(j)
+  Returns:
+      Tensor: Similarity matrix.
+  """
+  mean_query, log_variance_query = query_embeddings
+  mean_refer, log_variance_refer = refer_embeddings
 
-  # Revert to previous model mode
-  model.train(model_is_training)
+  variance_query = t.exp(log_variance_query)
+  variance_refer = t.exp(log_variance_refer)
 
-  return [t.stack(list_of_samples[i]).to(device) for i in range(len(list_of_samples))]
+  mean_y = mean_refer.unsqueeze(0)
+  variance_y = variance_refer.unsqueeze(0)
 
-# def proxy_init_calc(model, dataloader):
-#   nb_classes = dataloader.dataset.nb_classes()
-#   X, T, *_ = predict_batchwise(model, dataloader)
+  if limit_memory:
+    scores_list = []
+    for i in range(mean_query.size(0)):
+      mean_x = mean_query.unsqueeze(1)[i, :, :]
+      variance_x = variance_query.unsqueeze(1)[i, :, :]
+      fused_variance = variance_x + variance_y
 
-#   proxy_mean = torch.stack([X[T==class_idx].mean(0) for class_idx in range(nb_classes)])
+      scores = t.square(mean_x - mean_y) / (1e-10 + fused_variance) + t.log(fused_variance)
+      scores = t.sum(scores, dim=-1)
+      scores_list.append(scores)
 
-#   return proxy_mean
+    score_mat = t.cat(scores_list, dim=0)
+
+  else:
+    mean_x = mean_query.unsqueeze(1)
+    variance_x = variance_query.unsqueeze(1)
+    fused_variance = variance_x + variance_y
+
+    score_mat = t.square(mean_x - mean_y) / (1e-10 + fused_variance) + t.log(fused_variance)
+    score_mat = t.sum(score_mat, dim=-1)
+
+  return -0.5 * score_mat
