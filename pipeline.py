@@ -189,6 +189,13 @@ class Pipeline:
           lr=self.cfg.optimizer.lr,
           weight_decay=self.cfg.optimizer.weight_decay
       )
+    elif self.cfg.optimizer.name == 'sgd':
+      self.optimizer = t.optim.SGD(
+          self.param_groups,
+          lr=self.cfg.optimizer.lr,
+          momentum=self.cfg.optimizer.momentum,
+          weight_decay=self.cfg.optimizer.weight_decay
+      )
     else:
       raise ValueError(
           f'Invalid optimizer name provided in config file: {self.cfg.optimizer.name}')
