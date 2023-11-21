@@ -229,8 +229,25 @@ class Pipeline:
     self.logger.info('Starting training for %d epochs.', self.cfg.optimizer.epochs)
 
     best_recall = 0.0
+    start_epoch = 0
 
-    for epoch in range(self.cfg.optimizer.epochs):
+    if 'load_checkpoint' in self.cfg.model:
+      checkpoint_path = utils.get_checkpoint_path(
+          self.cfg.model.checkpoint_root, self.cfg.model.load_checkpoint
+      )
+      self.logger.info('Loading checkpoint from %s.', checkpoint_path)
+      checkpoint = t.load(checkpoint_path, map_location=self.device)
+
+      self.model.load_state_dict(checkpoint['model_state_dict'], assign=True)
+      self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+      self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+      start_epoch = checkpoint['epoch'] + 1
+      best_recall = checkpoint['best_recall']
+
+      self.logger.info('Loaded checkpoint from %s.', checkpoint_path)
+
+    for epoch in range(start_epoch, self.cfg.optimizer.epochs):
       self.logger.info('Epoch %d', epoch)
 
       # Set model to training mode

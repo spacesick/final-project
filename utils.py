@@ -1,3 +1,6 @@
+import glob
+import os
+
 import torch as t
 from torchvision import transforms
 
@@ -106,3 +109,30 @@ def compute_batch_mls(
     score_mat = t.sum(score_mat, dim=-1)
 
   return -0.5 * score_mat
+
+
+def get_checkpoint_path(root_path, ckpt_name='latest'):
+  """Return path to a model checkpoint.
+
+  Args:
+      root_path (str): Path to the root directory containing the model checkpoints.
+      ckpt_name (str, optional): Name of checkpoint file. If set to 'latest', it will find the latest checkpoint file in the given root directory. Defaults to 'latest'.
+
+  Raises:
+      ValueError: If no checkpoint is found in the given root directory with the given name.
+
+  Returns:
+      str: Relative path to the model checkpoint.
+  """
+  if ckpt_name == 'latest':
+    checkpoint_paths = glob.glob(os.path.join(root_path, '*.pth'))
+    if len(checkpoint_paths) == 0:
+      raise ValueError(f'No checkpoints found in {root_path}')
+    checkpoint_paths = sorted(checkpoint_paths)
+    return checkpoint_paths[-1]
+  else:
+    checkpoint_path = os.path.join(root_path, ckpt_name)
+    if os.path.isfile(checkpoint_path):
+      return checkpoint_path
+    else:
+      raise ValueError(f'No checkpoint found in {checkpoint_path}')
