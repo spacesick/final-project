@@ -96,8 +96,16 @@ class Pipeline:
           transform=utils.make_transform(train=False),
           download=True
       )
-    elif self.cfg.dataset.name == 'casia-webface':
-      raise NotImplementedError
+    elif self.cfg.dataset.name == 'casia-lfw':
+      self.trn_set = CasiaWebFaceDataset(
+          transform=utils.make_transform(train=True)
+      )
+      self.tst_set = LFWDataset(
+          split='10fold',
+          image_set='original',
+          transform=utils.make_transform(train=False),
+          download=True
+      )
     else:
       raise ValueError(
           f'Invalid dataset name provided in config file: {self.cfg.dataset.name}')
