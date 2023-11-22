@@ -63,6 +63,37 @@ def compute_recall_at_k(
   return tp / len(labels)
 
 
+def compute_map_at_r(
+    labels,
+    label_predictions
+):
+  """Compute MAP@R metric. See https://www.ecva.net/papers/eccv_2020/papers_ECCV/papers/123700681.pdf
+
+  Args:
+      labels (Tensor): Target labels with size (number of samples).
+      label_predictions (Tensor): Top n predicted labels with size (number of samples, n).
+
+  Returns:
+      float: MAP@R value.
+  """
+  assert label_predictions.dim() == 2
+  assert labels.size(0) == label_predictions.size(0)
+  assert labels.dtype == label_predictions.dtype
+
+  device = labels.device
+
+  ap_at_r = 0
+  for actual, predictions in zip(labels, label_predictions):
+    truths = (actual == predictions)
+    r = truths.sum()
+
+    if r > 0:
+      tp_pos = t.arange(1, r + 1, device=device)[truths[:r] > 0]
+      ap_at_r += t.div((t.arange(len(tp_pos), device=device) + 1), tp_pos).sum() / r
+
+  return ap_at_r / len(labels)
+
+
 def compute_batch_mls(
     query_embeddings,
     refer_embeddings,

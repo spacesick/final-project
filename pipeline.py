@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import random
@@ -259,6 +260,7 @@ class Pipeline:
     self.logger.info('Starting training for %d epochs.', self.cfg.optimizer.epochs)
 
     best_recall = 0.0
+    best_map_at_r = 0.0
     start_epoch = 0
 
     if 'load_checkpoint' in self.cfg.model:
@@ -274,6 +276,7 @@ class Pipeline:
 
       start_epoch = checkpoint['epoch'] + 1
       best_recall = checkpoint['best_recall']
+      best_map_at_r = checkpoint['best_map_at_r']
 
       self.logger.info('Loaded checkpoint from %s.', checkpoint_path)
 
@@ -354,7 +357,7 @@ class Pipeline:
 
       if (epoch + 1) % self.cfg.logging.period == 0:
         epoch_start_time = time.time()
-        mean_tst_loss, recall = self.eval_metrics()
+        mean_tst_loss, recall, map_at_r = self.eval_metrics()
         epoch_evaluation_time = time.time() - epoch_start_time
         self.logger.info(
             'Elapsed evaluation epoch time = %.3f seconds',
@@ -370,11 +373,16 @@ class Pipeline:
               k,
               100.0 * r_at_k
           )
+        self.logger.info(
+            'MAP@R = %.4f',
+            100.0 * map_at_r
+        )
 
         if self.cfg.logging.log_to_wandb:
           wandb.log({
               'Test Loss': mean_tst_loss,
-              'Epoch Evaluation Time': epoch_evaluation_time
+              'Epoch Evaluation Time': epoch_evaluation_time,
+              'MAP@R': 100.0 * map_at_r
           }, step=epoch)
           for k, r_at_k in recall.items():
             wandb.log({
@@ -382,16 +390,18 @@ class Pipeline:
             }, step=epoch)
           self.logger.info('Logged epoch summary to WandB.')
 
-        if recall[1] > best_recall or (epoch + 1) % 100 == 0:
+        if recall[1] > best_recall or map_at_r > best_map_at_r or (epoch + 1) % 100 == 0:
           best_recall = recall[1]
-          ckpt_path = f"{self.cfg.model.checkpoint_root}/{datetime.now().strftime('%Y-%m-%d_%H.%M.%S')}_{self.cfg.model.name}_{self.cfg.dataset.name}_{best_recall:.3f}_{epoch}_{self.cfg.experiment}.pth"
+          best_map_at_r = map_at_r
+          ckpt_path = f"{self.cfg.model.checkpoint_root}/{datetime.now().strftime('%Y-%m-%d_%H.%M.%S')}_{self.cfg.model.name}_{self.cfg.dataset.name}_{best_recall:.3f}_{best_map_at_r:.3f}_{epoch}_{self.cfg.experiment}.pth"
           t.save({
               'epoch': epoch,
               'model_state_dict': self.model.state_dict(),
               'optimizer_state_dict': self.optimizer.state_dict(),
               'scheduler_state_dict': self.scheduler.state_dict(),
               'loss': loss,
-              'best_recall': best_recall
+              'best_recall': best_recall,
+              'best_map_at_r': best_map_at_r
           }, ckpt_path)
           self.logger.info('New checkpoint saved in %s.', ckpt_path)
 
@@ -468,4 +478,6 @@ class Pipeline:
         r_at_k = utils.compute_recall_at_k(labels, ranked_similar_labels, k)
         recall[k] = r_at_k
 
-      return mean_tst_loss, recall
+      map_at_r = utils.compute_map_at_r(labels, ranked_similar_labels)
+
+      return mean_tst_loss, recall, map_at_r
