@@ -17,7 +17,8 @@ from torch.utils.data.sampler import BatchSampler
 from tqdm import tqdm
 
 import utils
-from dataset import BalancedSampler, CasiaWebFaceDataset, LFWDataset
+from dataset import (BalancedSampler, CasiaWebFaceDataset, LFWDataset,
+                     LFWGFPGANDataset)
 from losses.mls import MutualLikelihoodScore
 from models.pfe import PFE
 from models.proxyanchor import ProxyAnchor
@@ -93,6 +94,19 @@ class Pipeline:
       self.tst_set = LFWDataset(
           split='test',
           image_set='original',
+          transform=utils.make_transform(train=False),
+          download=True
+      )
+    elif self.cfg.dataset.name == 'lfw-gfpgan-only':
+      self.trn_set = LFWGFPGANDataset(
+          split='train',
+          image_set='deepfunneled',
+          transform=utils.make_transform(train=True),
+          download=True
+      )
+      self.tst_set = LFWGFPGANDataset(
+          split='test',
+          image_set='deepfunneled',
           transform=utils.make_transform(train=False),
           download=True
       )

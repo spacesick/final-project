@@ -11,12 +11,11 @@ class CasiaWebFaceDataset(VisionDataset):
 
   def __init__(
       self,
-      root: str,
-      transform,
-      target_transform
+      transform: Optional[Callable] = None,
+      target_transform: Optional[Callable] = None
   ):
     super().__init__(
-        root,
+        os.path.join('data', 'casia-webface'),
         transform=transform,
         target_transform=target_transform
     )
@@ -24,7 +23,7 @@ class CasiaWebFaceDataset(VisionDataset):
     self.class_to_idx = self._get_classes()
     self.data = []
     self.targets = []
-    for class_path, _, class_images in sorted(os.walk(self.root)):
+    for class_path, _, class_images in sorted(os.walk(self.root))[1:]:
       for image in class_images:
         self.data.append(os.path.join(class_path, image))
         class_name = class_path.split(os.sep)[-1]
@@ -65,7 +64,6 @@ class LFWDataset(LFWPeople):
 
   def __init__(
       self,
-      root: str,
       split: str = "10fold",
       image_set: str = "funneled",
       transform: Optional[Callable] = None,
@@ -73,12 +71,42 @@ class LFWDataset(LFWPeople):
       download: bool = False,
   ) -> None:
     super().__init__(
-        root,
+        os.path.join('data', 'lfw'),
         split,
         image_set,
         transform,
         target_transform,
         download
+    )
+
+    # Set class numbers to be in the range: [0, number of classes)
+    self.targets = np.unique(self.targets, return_inverse=True)[1].tolist()
+
+  def num_classes(self):
+    return len(self.class_to_idx)
+
+
+class LFWGFPGANDataset(LFWPeople):
+
+  def __init__(
+      self,
+      split: str = "10fold",
+      image_set: str = "funneled",
+      transform: Optional[Callable] = None,
+      target_transform: Optional[Callable] = None,
+      download: bool = False,
+  ) -> None:
+    super().__init__(
+        os.path.join('data', 'lfw'),
+        split,
+        image_set,
+        transform,
+        target_transform,
+        download
+    )
+
+    self.file_dict['deepfunneled'] = (
+        "lfw-deepfunneled-GFPGAN", "lfw-deepfunneled.tgz", "68331da3eb755a505a502b5aacb3c201"
     )
 
     # Set class numbers to be in the range: [0, number of classes)
