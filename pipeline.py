@@ -20,6 +20,7 @@ import utils
 from dataset import (BalancedSampler, CasiaWebFaceDataset, LFWDataset,
                      LFWGFPGANDataset)
 from losses.mls import MutualLikelihoodScore
+from losses.proxymls import ProxyMLS
 from models.pfe import PFE
 from models.proxyanchor import ProxyAnchor
 
@@ -174,6 +175,21 @@ class Pipeline:
           embedding_size=self.cfg.model.emb_size,
           margin=self.cfg.loss.margin,
           alpha=self.cfg.loss.alpha,
+      )
+    elif self.cfg.model.name == 'proxype':
+      self.model = PFE(
+          emb_size=self.cfg.model.emb_size,
+          use_pretrained=self.cfg.model.use_pretrained,
+          use_l2norm=self.cfg.model.use_l2norm,
+          freeze_bnorm=self.cfg.model.freeze_bnorm,
+          freeze_backbone=self.cfg.model.freeze_backbone,
+          uncertainty_fc_size=self.cfg.model.uncertainty_fc_size
+      )
+      self.loss_func = ProxyMLS(
+          num_classes=self.num_classes,
+          embedding_size=self.cfg.model.emb_size,
+          margin=self.cfg.loss.margin,
+          alpha=self.cfg.loss.alpha
       )
     else:
       raise ValueError(
