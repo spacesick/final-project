@@ -1,7 +1,9 @@
 import glob
 import os
 
+import numpy as np
 import torch as t
+from sklearn.metrics import roc_curve
 from torchvision import transforms
 
 
@@ -92,6 +94,40 @@ def compute_map_at_r(
       ap_at_r += t.div((t.arange(len(tp_pos), device=device) + 1), tp_pos).sum() / r
 
   return ap_at_r / len(labels)
+
+
+def compute_tar_at_far(
+    labels,
+    label_predictions,
+    score_predictions,
+    far_value=0.001
+):
+  """Computer TAR@FAR metric.
+
+  Args:
+      labels (Tensor): Target labels with size (number of samples).
+      label_predictions (Tensor): Top n predicted labels with size (number of samples, n).
+      score_predictions (Tensor): Top n predicted similarity scores with size (number of samples, n).
+      far_value (float, optional): FAR value. Defaults to 0.001.
+
+  Returns:
+      float: TAR@FAR value.
+  """
+  assert label_predictions.dim() == score_predictions.dim() == 2
+  assert label_predictions.size(1) == score_predictions.size(1)
+  assert labels.size(0) == label_predictions.size(0) == score_predictions.size(0)
+  assert labels.dtype == label_predictions.dtype
+
+  tar_at_far = 0
+  truths = []
+  for actual, l_predictions, s_predictions in zip(labels, label_predictions, score_predictions):
+    truths.append((actual == l_predictions))
+
+  truths = t.cat(truths)
+  far, tar, _ = roc_curve(truths.cpu(), score_predictions.cpu().reshape(-1))
+  tar_at_far += np.interp(far_value, far, tar)
+
+  return tar_at_far / len(labels)
 
 
 def compute_batch_mls(
