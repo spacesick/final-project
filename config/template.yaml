@@ -1,17 +1,22 @@
 # Device type to use.
+# cpu | cuda:n
 device: cpu
 
 # Set a global seed to make experiments reproducible. Delete this line to use a random seed.
 seed: 1
 
+# Experiment name. Used for logging and checkpointing.
+experiment: a0
+
 model:
   # Name of model.
-  # pfe | proxyanchor
+  # pfe | proxyanchor | proxype
   name: pfe
   # Folder path to save and load model checkpoints.
   checkpoint_root: ckpt/pfe
-  # Whether to load the latest checkpoint in checkpoint_root.
-  load_latest_checkpoint: False
+  # Load latest checkpoint or from a given checkpoint file in checkpoint_root.
+  # latest | example_ckpt.pth
+  load_checkpoint: latest
   # Model embedding size.
   emb_size: 512
   # Whether to load imagenet pretrained weights for the model backbone (resnet).
@@ -55,10 +60,8 @@ lr_scheduler:
 
 dataset:
   # Name of dataset.
-  # lfw | casia-webface
-  name: lfw
-  # Root folder path to the specified dataset.
-  path: data/lfw
+  # lfw-only | casia-lfw | lfw-gfpgan-only
+  name: lfw-only
   # Batch size.
   batch_size: 4
   # Number of classes per batch.
@@ -69,3 +72,5 @@ dataset:
 logging:
   # Whether to log to WandB.
   log_to_wandb: False
+  # Logging period in epochs.
+  period: 5
