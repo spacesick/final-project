@@ -1,11 +1,13 @@
-device: cuda
+device: cuda:4
 
 seed: 1
+
+experiment: i0
 
 model:
   name: proxyanchor
   checkpoint_root: ckpt/proxyanchor
-  load_latest_checkpoint: False
+  load_checkpoint: latest
   emb_size: 512
   use_pretrained: True
   use_l2norm: True
@@ -14,10 +16,9 @@ model:
 
 optimizer:
   name: adamw
-  lr: 1e-4
-  epochs: 2
+  lr: 0.00000466
+  epochs: 600
   weight_decay: 1e-4
-  warmup: 10
 
 loss:
   margin: 0.1
@@ -25,15 +26,15 @@ loss:
 
 lr_scheduler:
   name: step
-  decay_step_size: 100
-  decay_gamma: 0.5
+  decay_step_size: 30
+  decay_gamma: 0.98
 
 dataset:
-  name: lfw
-  path: data/lfw
-  batch_size: 4
-  batch_classes: 1
-  workers: 1
+  name: lfw-gfpgan-only
+  batch_size: 16
+  batch_classes: 4
+  workers: 3
 
 logging:
-  log_to_wandb: False
+  log_to_wandb: True
+  period: 5

@@ -1,0 +1,41 @@
+device: cuda:4
+
+seed: 1
+
+experiment: i0
+
+model:
+  name: proxype
+  checkpoint_root: ckpt/proxype
+  load_checkpoint: latest
+  emb_size: 512
+  use_pretrained: True
+  use_l2norm: True
+  freeze_bnorm: True
+  freeze_backbone: True
+  uncertainty_fc_size: 256
+
+optimizer:
+  name: adamw
+  lr: 0.0001
+  epochs: 600
+  weight_decay: 1e-7
+
+loss:
+  margin: 0.1
+  alpha: 0.1
+
+lr_scheduler:
+  name: step
+  decay_step_size: 30
+  decay_gamma: 0.98
+
+dataset:
+  name: lfw-gfpgan-only
+  batch_size: 16
+  batch_classes: 4
+  workers: 3
+
+logging:
+  log_to_wandb: True
+  period: 5
